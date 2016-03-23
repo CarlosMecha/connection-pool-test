@@ -2,5 +2,10 @@
 import bottle
 import index
 
-bottle.run(port=8080)
+
+def main():
+    bottle.run(index.app, port=8080)
+
+if __name__ == '__main__':
+    main()
 
