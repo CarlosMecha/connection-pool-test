@@ -1,64 +1,47 @@
 import bottle
 import logging
+import redis
 import threading
 
-_local = threading.local()
-
 logging.basicConfig(level=logging.DEBUG)
+
 _logger = logging.getLogger('module')
-_local.logger = logging.getLogger('thread-%d' % threading.current_thread().ident)
 _logger.info('Reading module')
 
-class ConnectionPool(object):
+_redis_pool = redis.BlockingConnectionPool(host='localhost', port=6379, db=9)
+_redis_client = None
 
-    def __init__(self):
-        self._logger = logging.getLogger('thread-%d' % threading.current_thread().ident)
-        self._logger.info('Creating instance by %s', threading.current_thread().name)
+EXPIRATION = 60 * 5 # 5 minutes
 
-    # Returns a connection id. If there is not a connection available, 
-    # this method blocks until one is released.
-    def adquire_connection(self):
-        self._logger.info('Requesting connection.')
-        return 1
-
-    #
-    # Releases the connection.
-    # 
-    def release_connection(self, connection_id):
-        self._logger.info('Releasing connection %d', connection_id)
-        return True
-
-_pool = None
-
-def get_pool():
-
-    global _pool
-
-    if _pool is None:
-        _pool = ConnectionPool()
-    return _pool
+def get_redis_connection():
+    global _redis_client
+    if _redis_client is None:
+        _logger.info('Creating Redis client from thread %s', threading.current_thread().name)
+        _redis_client = redis.Redis(connection_pool=_redis_pool)
+    return _redis_client
 
 app = bottle.Bottle()
 
 @app.route('/')
 def index():
-    _local.logger.info('Executing request from thread %s', threading.current_thread().name)
-    return "I'm working!"
+    log('GET', '')
+    return 'I\'m doing great!'
 
-@app.route('/function')
-def function_scope():
-    _local.logger.info('Executing request from thread %s', threading.current_thread().name)
-    pool = ConnectionPool()
-    return "OK"
+@app.get('/<key>')
+def get_key(key):
+    log('GET', key)
+    res = get_redis_connection().get(key)
+    return res if res else 'Key %s not found' % key
 
-@app.route('/thread')
-def thread_scope():
-    _local.logger.info('Executing request from thread %s', threading.current_thread().name)
-    return "OK"
+@app.post('/<key>')
+def set_key(key):
+    log('POST', key)
+    content = bottle.request.body.getvalue()
+    res = get_redis_connection().setex(key, content, EXPIRATION)
+    return 'Key %s stored' % key if res else 'Key %s not stored' % key
 
-@app.route('/module')
-def module_scope():
-    _local.logger.info('Executing request from thread %s', threading.current_thread().name)
-    pool = get_pool()
-    return "OK"
+def log(method, key):
+    name = threading.current_thread().name
+    logger = logging.getLogger('thread-%s' % name)
+    logger.info('Executing %s /%s from thread %s', method, key, name)
 
